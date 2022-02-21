@@ -12,6 +12,7 @@ So far here is the listing of what is done and what needs doing.
     - [ ] Make sure it actually works.
     - [ ] See what can be done better.
 - [ ] Write all the tests.
+- [ ] Start building the CLI. It should be simple but I want to make sure that it is easy to send and receive in the format that the app expects. **I don't want all of my weird enums and wrappers to interfere with usage.**
 - [ ] Ensure code actually runs / works. I've finally gotten the errors to disappear but as we all know with interior mutability, that just means it will probably fail at runtime instead of yelling at me at compile-time.
 - [ ] Expand the [ComputeRequest] and [ComputeResponse] types, as they are currently mostly just a placeholder.
 - [ ] Split up any files that contain too much crap. I've moved the [error](./src/core/types/error/mod.rs) file into it's own sub-module, but it's all still sitting in mod.rs instead of separate files as it should be. I'd rather have lots of files than huge files.
