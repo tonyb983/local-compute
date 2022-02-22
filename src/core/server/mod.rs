@@ -4,6 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+mod axum_hello;
 mod axum_server;
 mod hyper_server;
 mod warp_server;
@@ -13,3 +14,5 @@ pub trait ServerInstance {
     fn start(&self, addr: &std::net::SocketAddr) -> Result<(), Self::Error>;
     fn stop(&self) -> Result<(), Self::Error>;
 }
+
+pub use axum_hello::run_hello_server;

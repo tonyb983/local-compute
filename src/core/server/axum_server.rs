@@ -29,17 +29,19 @@ type RwLockManager = Arc<RwLock<ComputeFunctionManager>>;
 
 async fn process_input_mutex(pm: &MutexManager, input: &AppInput) -> AppResult<AppOutput> {
     match input {
-        AppInput::AddComputeFunction(lib) => unsafe {
+        AppInput::AddComputeFunction(add) => unsafe {
             pm.lock()
                 .await
-                .load_plugin(lib)
+                .load_plugin(add.lib_path().to_string())
+                .await
                 .map(|_| AppOutput::AddFunctionSuccess)
                 .map_err(std::convert::Into::into)
         },
-        AppInput::RemoveComputeFunction(target) => pm
+        AppInput::RemoveComputeFunction(remove) => pm
             .lock()
             .await
-            .unload_plugin(target)
+            .unload_plugin(remove.target())
+            .await
             .map(|_| AppOutput::RemoveFunctionSuccess)
             .map_err(std::convert::Into::into),
         AppInput::Execute(req) => pm
@@ -53,17 +55,19 @@ async fn process_input_mutex(pm: &MutexManager, input: &AppInput) -> AppResult<A
 
 async fn process_input_rw(pm: RwLockManager, input: &AppInput) -> AppResult<AppOutput> {
     match input {
-        AppInput::AddComputeFunction(lib) => unsafe {
-            let mut pm_writer = pm.write_owned().await;
+        AppInput::AddComputeFunction(add) => unsafe {
+            let pm_writer = pm.write_owned().await;
             pm_writer
-                .load_plugin(lib)
+                .load_plugin(add.lib_path().to_string())
+                .await
                 .map(|_| AppOutput::AddFunctionSuccess)
                 .map_err(std::convert::Into::into)
         },
-        AppInput::RemoveComputeFunction(target) => {
-            let mut pm_writer = pm.write_owned().await;
+        AppInput::RemoveComputeFunction(rm) => {
+            let pm_writer = pm.write_owned().await;
             pm_writer
-                .unload_plugin(target)
+                .unload_plugin(rm.target())
+                .await
                 .map(|_| AppOutput::RemoveFunctionSuccess)
                 .map_err(std::convert::Into::into)
         }
@@ -181,17 +185,19 @@ pub struct AxumServer {
 impl AxumServer {
     async fn process_input_mutex(pm: &MutexManager, input: &AppInput) -> AppResult<AppOutput> {
         match input {
-            AppInput::AddComputeFunction(lib) => unsafe {
+            AppInput::AddComputeFunction(add) => unsafe {
                 pm.lock()
                     .await
-                    .load_plugin(lib)
+                    .load_plugin(add.lib_path().to_string())
+                    .await
                     .map(|_| AppOutput::AddFunctionSuccess)
                     .map_err(std::convert::Into::into)
             },
-            AppInput::RemoveComputeFunction(target) => pm
+            AppInput::RemoveComputeFunction(rm) => pm
                 .lock()
                 .await
-                .unload_plugin(target)
+                .unload_plugin(rm.target())
+                .await
                 .map(|_| AppOutput::RemoveFunctionSuccess)
                 .map_err(std::convert::Into::into),
             AppInput::Execute(req) => pm
@@ -205,17 +211,19 @@ impl AxumServer {
 
     async fn process_input_rw(pm: RwLockManager, input: &AppInput) -> AppResult<AppOutput> {
         match input {
-            AppInput::AddComputeFunction(lib) => unsafe {
-                let mut pm_writer = pm.write_owned().await;
+            AppInput::AddComputeFunction(add) => unsafe {
+                let pm_writer = pm.write_owned().await;
                 pm_writer
-                    .load_plugin(lib)
+                    .load_plugin(add.lib_path().to_string())
+                    .await
                     .map(|_| AppOutput::AddFunctionSuccess)
                     .map_err(std::convert::Into::into)
             },
-            AppInput::RemoveComputeFunction(target) => {
-                let mut pm_writer = pm.write_owned().await;
+            AppInput::RemoveComputeFunction(rm) => {
+                let pm_writer = pm.write_owned().await;
                 pm_writer
-                    .unload_plugin(target)
+                    .unload_plugin(rm.target())
+                    .await
                     .map(|_| AppOutput::RemoveFunctionSuccess)
                     .map_err(std::convert::Into::into)
             }
@@ -309,25 +317,24 @@ impl AxumServer {
         addr: &SocketAddr,
         sync_type: ServerSyncType,
         shutdown_signal: tokio::sync::oneshot::Receiver<()>,
-    ) -> tokio::task::JoinHandle<()> {
-        let router = match sync_type {
-            ServerSyncType::Mutex => Router::new()
-                .route("/", post(Self::input_handler_mutex))
-                .layer(AddExtensionLayer::new(MutexManager::default())),
-            ServerSyncType::RwLock => Router::new()
-                .route("/", post(Self::input_handler_rw))
-                .layer(AddExtensionLayer::new(RwLockManager::default())),
-        };
-        let server = Server::bind(addr)
-            .serve(router.into_make_service())
-            .with_graceful_shutdown(async move {
-                shutdown_signal.await.ok();
-            });
-
+    ) -> tokio::task::JoinHandle<Result<(), hyper::Error>> {
+        let addr = *addr;
         tokio::task::spawn(async move {
-            if let Err(e) = server.await {
-                eprintln!("server error: {}", e);
-            }
+            let router = match sync_type {
+                ServerSyncType::Mutex => Router::new()
+                    .route("/", post(Self::input_handler_mutex))
+                    .layer(AddExtensionLayer::new(MutexManager::default())),
+                ServerSyncType::RwLock => Router::new()
+                    .route("/", post(Self::input_handler_rw))
+                    .layer(AddExtensionLayer::new(RwLockManager::default())),
+            };
+            let server = Server::bind(&addr)
+                .serve(router.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_signal.await.ok();
+                });
+
+            server.await
         })
     }
 }

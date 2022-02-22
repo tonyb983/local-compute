@@ -11,6 +11,7 @@ mod output;
 mod req;
 mod resp;
 mod status;
+mod targets;
 
 pub use error::{
     AppError, AppResult, BadInputError, BadRequestError, LoadingError, UnloadingError,
@@ -18,6 +19,7 @@ pub use error::{
 pub use func::ComputeFunction;
 pub use input::AppInput;
 pub use output::AppOutput;
-pub use req::{ComputeRequest, TargetComputeFunc};
+pub use req::{AddFunctionRequest, ComputeRequest, RemoveFunctionRequest};
 pub use resp::{ComputeJsonResponse, ComputeResponse};
 pub use status::*;
+pub use targets::TargetComputeFunc;

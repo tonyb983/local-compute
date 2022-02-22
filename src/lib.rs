@@ -1,4 +1,10 @@
-#![feature(crate_visibility_modifier, lint_reasons, path_try_exists, try_blocks)]
+#![feature(
+    crate_visibility_modifier,
+    label_break_value,
+    lint_reasons,
+    path_try_exists,
+    try_blocks
+)]
 #![warn(
     clippy::pedantic,
     clippy::nursery,
@@ -27,8 +33,18 @@ mod dynamic_libs;
 mod functions;
 crate mod util;
 
-pub use crate::core::types::{ComputeFunction, ComputeRequest, ComputeResponse};
+pub use crate::core::types::{BadRequestError, ComputeFunction, ComputeRequest, ComputeResponse};
 pub use async_trait::async_trait;
 pub use serde_json::{json, Value as JsonValue};
+
+pub async fn run() {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));
+    let handle: tokio::task::JoinHandle<Result<(), hyper::Error>> =
+        core::server::run_hello_server(addr).await;
+
+    if let Err(err) = handle.await {
+        eprintln!("{}", err);
+    }
+}
 
 // Dumb

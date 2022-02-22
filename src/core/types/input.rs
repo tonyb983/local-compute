@@ -6,11 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::types::{ComputeRequest, TargetComputeFunc};
+use crate::core::types::{AddFunctionRequest, ComputeRequest, RemoveFunctionRequest};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum AppInput {
-    AddComputeFunction(String),
-    RemoveComputeFunction(TargetComputeFunc),
+    AddComputeFunction(AddFunctionRequest),
+    RemoveComputeFunction(RemoveFunctionRequest),
     Execute(ComputeRequest),
 }

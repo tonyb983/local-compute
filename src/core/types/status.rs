@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Copy, Clone, Deserialize, Serialize)]
 pub enum GenericStatusCode {
     Ok,
+    Created,
     NotFound,
     BadRequest,
     InternalError,
@@ -19,11 +20,18 @@ pub enum GenericStatusCode {
     Unknown,
 }
 
+impl Default for GenericStatusCode {
+    fn default() -> Self {
+        Self::Ok
+    }
+}
+
 impl GenericStatusCode {
     #[must_use]
     pub const fn from_u16(i: u16) -> Self {
         match i {
             200 => Self::Ok,
+            201 => Self::Created,
             400 => Self::BadRequest,
             404 => Self::NotFound,
             409 => Self::Conflict,
@@ -38,6 +46,7 @@ impl GenericStatusCode {
     pub const fn to_u16(self) -> u16 {
         match self {
             Self::Ok => 200,
+            Self::Created => 201,
             Self::NotFound => 404,
             Self::Conflict => 409,
             Self::PreconditionFailed => 412,
@@ -51,6 +60,7 @@ impl GenericStatusCode {
     pub fn to_status_code(self) -> StatusCode {
         match self {
             Self::Ok => StatusCode::OK,
+            Self::Created => StatusCode::CREATED,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest => StatusCode::BAD_REQUEST,
             Self::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
@@ -66,9 +76,13 @@ impl From<StatusCode> for GenericStatusCode {
     fn from(code: StatusCode) -> Self {
         match code {
             StatusCode::OK => Self::Ok,
+            StatusCode::CREATED => Self::Created,
             StatusCode::NOT_FOUND => Self::NotFound,
+            StatusCode::CONFLICT => Self::Conflict,
+            StatusCode::PRECONDITION_FAILED => Self::PreconditionFailed,
             StatusCode::BAD_REQUEST => Self::BadRequest,
             StatusCode::INTERNAL_SERVER_ERROR => Self::InternalError,
+            StatusCode::IM_A_TEAPOT => Self::Unknown,
             _ => Self::Other(code.as_u16()),
         }
     }

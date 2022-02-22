@@ -27,6 +27,7 @@ pub trait ComputeFunction: Any + Send + Sync + std::fmt::Debug {
     /// See the [`ComputeRequest`] documentation for more information on the input.
     /// If your function has no output, [`ComputeResponse::empty`] can be used to
     /// create an empty response.
+    #[allow(clippy::unused_async)]
     async fn receive_request(
         &self,
         request: &ComputeRequest,
@@ -56,7 +57,7 @@ mod tests {
             &self,
             _request: &ComputeRequest,
         ) -> Result<ComputeResponse, BadRequestError> {
-            Ok(ComputeResponse::from_data(
+            Ok(ComputeResponse::json_ok(
                 json!({ "message": "Hello, World!" }),
             ))
         }
@@ -76,7 +77,7 @@ mod tests {
                 let mut lock = self.logs.lock().await;
                 lock.push(request.data().clone());
             }
-            Ok(ComputeResponse::empty())
+            Ok(ComputeResponse::ok())
         }
     }
 }

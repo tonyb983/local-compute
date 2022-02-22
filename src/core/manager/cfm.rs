@@ -4,29 +4,94 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::{collections::HashMap, ffi::OsStr};
+use std::collections::HashMap;
 
 use libloading::{Library, Symbol};
 use tokio::sync::Mutex;
 
-use crate::core::types::{
-    AppError, AppResult, ComputeFunction, ComputeRequest, ComputeResponse, LoadingError,
-    TargetComputeFunc, UnloadingError,
+use crate::{
+    core::types::{
+        AppError, AppResult, ComputeFunction, ComputeRequest, ComputeResponse, LoadingError,
+        TargetComputeFunc, UnloadingError,
+    },
+    functions::{BuiltinFunction, BuiltinFunctionList},
 };
 
 #[derive(Debug, Default)]
 pub struct ComputeFunctionManager {
     functions: Mutex<HashMap<String, Box<dyn ComputeFunction>>>,
     loaded_libraries: Mutex<Vec<Library>>,
+    builtins: Mutex<BuiltinFunctionList>,
 }
 
 impl ComputeFunctionManager {
+    /// Create a new, empty, [`ComputeFunctionManager`].
     #[must_use]
     pub fn new() -> Self {
         Self {
             functions: Mutex::default(),
             loaded_libraries: Mutex::default(),
+            builtins: Mutex::default(),
         }
+    }
+
+    /// Create a new [`ComputeFunctionManager`] with the builtin logger already added.
+    #[must_use]
+    pub fn with_logger() -> Self {
+        let mut manager = Self::new();
+        let logger = BuiltinFunction::Logger.create();
+        manager.load_builtin_instance(logger);
+        manager
+    }
+
+    /// Create a new [`ComputeFunctionManager`] with the given [`BuiltinFunctionList`] as initial plugins.
+    #[must_use]
+    pub fn with_builtins(funcs: &BuiltinFunctionList) -> Self {
+        let mut manager = Self::new();
+        for func in funcs.create_all() {
+            manager.load_builtin_instance(func);
+        }
+        manager
+    }
+
+    /// Internal function to create and add a [`BuiltinFunction`] to the [`ComputeFunctionManager`]. Takes a mutable
+    /// reference so it's harder to use but safer (presumably?). Intended to be used when the manager is initialized.
+    pub(crate) fn init_builtin_instance<F: FnOnce() -> Option<Box<dyn ComputeFunction>>>(
+        &mut self,
+        creator: F,
+    ) {
+        if let Some(inst) = creator() {
+            self.functions
+                .get_mut()
+                .insert(inst.name().to_string(), inst);
+        }
+    }
+
+    /// Internal function to add a [`BuiltinFunction`] instance to the [`ComputeFunctionManager`]. Takes a mutable
+    /// reference so it's harder to use but safer (presumably?). Intended to be used when the manager is initialized.
+    pub(crate) fn load_builtin_instance(&mut self, instance: Box<dyn ComputeFunction>) {
+        self.functions
+            .get_mut()
+            .insert(instance.name().to_string(), instance);
+    }
+
+    /// Load a built-in (hardcoded) plugin indicated by the given [`BuiltinFunction`] `kind`. This is safe
+    /// as it requires no dynamic loading.
+    pub async fn load_builtin_function(&self, kind: BuiltinFunction) -> Result<bool, LoadingError> {
+        {
+            let mut lock = self.builtins.lock().await;
+            if !lock.add(kind) {
+                return Ok(false);
+            }
+        }
+
+        {
+            let mut lock = self.functions.lock().await;
+            let func = kind.create();
+            lock.insert(func.name().to_string(), func);
+        }
+
+        Ok(true)
     }
 
     /// Loads a [`ComputeFunction`] plugin from a `cdylib` dll at the given path.
@@ -56,10 +121,7 @@ impl ComputeFunctionManager {
     /// ```ignore
     /// /// TODO Write examples
     /// ```
-    pub unsafe fn load_plugin<P: AsRef<OsStr>>(
-        &mut self,
-        library_path: P,
-    ) -> Result<(), LoadingError> {
+    pub async unsafe fn load_plugin(&self, library_path: String) -> Result<(), LoadingError> {
         type CfCtor = unsafe fn() -> *mut dyn ComputeFunction;
 
         // Validate Path
@@ -67,7 +129,7 @@ impl ComputeFunctionManager {
         if !path.is_absolute() {
             return Err(LoadingError::bad_path(&format!(
                 "Path `{}` is not absolute.",
-                library_path.as_ref().to_string_lossy()
+                library_path
             )));
         }
         match std::fs::try_exists(path) {
@@ -75,13 +137,13 @@ impl ComputeFunctionManager {
             Ok(false) => {
                 return Err(LoadingError::path_not_found(&format!(
                     "Path `{}` does not exist.",
-                    library_path.as_ref().to_string_lossy()
+                    library_path
                 )))
             }
             Err(e) => {
                 return Err(LoadingError::bad_path(&format!(
                     "Could not verify the existence of `{}`, either due to errors or lack of permissions. Os error: {}",
-                    library_path.as_ref().to_string_lossy(),
+                    library_path,
                     e
                 )))
             }
@@ -96,15 +158,24 @@ impl ComputeFunctionManager {
             // if the library goes out of scope our plugin becomes invalid. I am not worried
             // about the `expect` call here since something would need to be very wrong
             // for it to fail.
-            self.loaded_libraries.get_mut().push(lib);
-            let lib = self.loaded_libraries
-            .get_mut()
-            .last()
-            .expect("This error should not happen, we are trying to get the last element of an array we just pushed to, so something is very wrong.");
+            {
+                let mut lock = self.loaded_libraries.lock().await;
+                lock.push(lib);
+            }
+
+            // self.loaded_libraries.get_mut().push(lib);
+            // let lib = self.loaded_libraries
+            // .get_mut()
+            // .last()
+            // .expect("This error should not happen, we are trying to get the last element of an array we just pushed to, so something is very wrong.");
 
             // Get the expected constructor function from the library
-            let constructor: Symbol<CfCtor> = lib
-                .get::<CfCtor>(b"_plugin_create")
+            let lib_lock = self.loaded_libraries.lock().await;
+
+            let constructor: Symbol<CfCtor> = lib_lock
+                .last()
+                .unwrap()
+                .get(b"_plugin_create")
                 .map_err(|err| LoadingError::ctor_load_failure(&err))?;
 
             // Unsafely call the constructor function to create a new plugin
@@ -118,15 +189,17 @@ impl ComputeFunctionManager {
         };
 
         let plugin_name = plugin.name();
-        if self.functions.get_mut().contains_key(plugin_name) {
-            // Name collisions are not allowed, first come first serve
-            return Err(LoadingError::name_collision(&plugin_name));
+        {
+            let fn_lock = self.functions.lock().await;
+            if fn_lock.contains_key(plugin_name) {
+                // Name collisions are not allowed, first come first serve
+                return Err(LoadingError::name_collision(&plugin_name));
+            }
         }
         // Allow plugin to initialize itself if necessary
         plugin.on_plugin_load();
-        self.functions
-            .get_mut()
-            .insert(plugin_name.to_string(), plugin);
+        let mut add_lock = self.functions.lock().await;
+        add_lock.insert(plugin_name.to_string(), plugin);
 
         Ok(())
     }
@@ -146,8 +219,9 @@ impl ComputeFunctionManager {
     /// ```ignore
     /// /// TODO Write examples
     /// ```
-    pub fn unload_plugin(&mut self, target: &TargetComputeFunc) -> Result<(), UnloadingError> {
-        self.functions.get_mut().remove(target.name()).map_or_else(
+    pub async fn unload_plugin(&self, target: &TargetComputeFunc) -> Result<(), UnloadingError> {
+        let mut fn_locked = self.functions.lock().await;
+        fn_locked.remove(target.name()).map_or_else(
             || Err(UnloadingError::TargetNotFound(target.clone())),
             |plugin| {
                 plugin.on_plugin_unload();
@@ -160,6 +234,8 @@ impl ComputeFunctionManager {
     /// TODO: Should this method resize the containers to 0? There should only ever be once of these instances
     ///       that lasts for the entire program so it seems unnecessary, but `drain` specifically states that
     ///       the previously allocated memory is held.
+    /// TODO: This is the only method on this struct that is not async. I imagine async functions that are
+    ///       invoked during a [`Drop`] impl are not good practice. Research this more.
     /// ## Example(s)
     /// ```ignore
     /// /// TODO Write examples
@@ -218,4 +294,12 @@ impl Drop for ComputeFunctionManager {
             self.unload_all();
         }
     }
+}
+
+pub fn default_cfm() -> ComputeFunctionManager {
+    ComputeFunctionManager::new()
+}
+
+pub fn logger_cfm() -> ComputeFunctionManager {
+    ComputeFunctionManager::with_logger()
 }
